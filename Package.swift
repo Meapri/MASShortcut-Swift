@@ -1,4 +1,4 @@
-// swift-tools-version:5.4
+// swift-tools-version:6.0
 
 import PackageDescription
 
@@ -6,7 +6,7 @@ let package = Package(
     name: "MASShortcut",
     defaultLocalization: "en",
     platforms: [
-        .macOS(.v10_11),
+        .macOS(.v13),
     ],
     products: [
         .library(name: "MASShortcut",
@@ -15,22 +15,16 @@ let package = Package(
     targets: [
         .target(
             name: "MASShortcut",
-            path: "Framework",
-            exclude: [
-                "Model/MASShortcutTests.m",
-                "Monitoring/MASHotKeyTests.m",
-                "Monitoring/MASShortcutMonitorTests.m",
-                "User Defaults Storage/MASDictionaryTransformerTests.m",
-                "User Defaults Storage/MASShortcutBinderTests.m",
-                "Info.plist",
-                "MASShortcut.modulemap",
-                "Prefix.pch"
-            ],
+            path: "Sources/MASShortcut",
             resources: [
                 .process("Resources")
-            ],
-            publicHeadersPath: "include"
+            ]
+        ),
+        .testTarget(
+            name: "MASShortcutTests",
+            dependencies: ["MASShortcut"],
+            path: "Tests"
         )
     ],
-    swiftLanguageVersions: [.v5]
+    swiftLanguageModes: [.v6]
 )
