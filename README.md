@@ -51,7 +51,7 @@ Pull requests welcome :)
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/shpakovski/MASShortcut", from: "3.0.0")
+    .package(url: "https://github.com/Meapri/MASShortcut-Swift.git", from: "3.0.1")
 ]
 ```
 
@@ -64,15 +64,15 @@ dependencies: [
 #### Integration
 1. Open your Xcode project
 2. Go to **File > Add Packages**
-3. Enter `https://github.com/shpakovski/MASShortcut`
-4. Choose the latest version (3.0.0+ for Swift 6 support)
+3. Enter `https://github.com/Meapri/MASShortcut-Swift.git`
+4. Choose the latest version (3.0.1+ for Swift 6 support)
 5. Add to your target
 
 ### Command Line Installation
 ```bash
 # Clone and build
-git clone https://github.com/shpakovski/MASShortcut.git
-cd MASShortcut
+git clone https://github.com/Meapri/MASShortcut-Swift.git
+cd MASShortcut-Swift
 swift build --configuration release
 ```
 
