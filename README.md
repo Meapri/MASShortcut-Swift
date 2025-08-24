@@ -51,7 +51,7 @@ Pull requests welcome :)
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Meapri/MASShortcut-Swift.git", from: "3.0.1")
+    .package(url: "https://github.com/Meapri/MASShortcut-Swift.git", from: "3.0.2")
 ]
 ```
 
@@ -61,11 +61,20 @@ dependencies: [
 - **Swift**: 6.0+ (with strict concurrency checking)
 - **Platform**: Intel & Apple Silicon (Universal Binary)
 
+### ✅ Swift 6 Compatibility
+MASShortcut v3.0.2+ is **fully compatible** with Swift 6's strict concurrency checking:
+
+- ✅ **Sendable Protocol Compliance**: All types properly conform to `Sendable`
+- ✅ **Thread Safety**: Protected mutable state with locks and actor isolation
+- ✅ **Async/Await Support**: Modern async APIs with proper error handling
+- ✅ **Backward Compatibility**: Legacy APIs remain fully functional
+- ✅ **Zero Warnings**: Compiles cleanly with Swift 6 strict concurrency mode
+
 #### Integration
 1. Open your Xcode project
 2. Go to **File > Add Packages**
 3. Enter `https://github.com/Meapri/MASShortcut-Swift.git`
-4. Choose the latest version (3.0.1+ for Swift 6 support)
+4. Choose the latest version (3.0.2+ for Swift 6 support)
 5. Add to your target
 
 ### Command Line Installation

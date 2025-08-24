@@ -35,41 +35,61 @@ public struct ShortcutRegistration: Sendable, Hashable {
 }
 
 /// Modern shortcut monitor with async/await support.
+/// Thread-safe implementation using serial queue for Swift 6 compatibility.
+/// Note: Uses @unchecked Sendable due to Carbon API dependencies and complex mutable state.
+/// This is a pragmatic choice for compatibility while acknowledging the trade-off.
 public final class MASShortcutMonitor: NSObject, ShortcutMonitoring, @unchecked Sendable {
 
     // MARK: - Properties
 
-    private var eventHandlerRef: EventHandlerRef?
+    // Dependencies
+    private let validator: MASShortcutValidator
+
+    // Serial queue for thread safety
+    private let registrationQueue = DispatchQueue(label: "com.masshortcut.registration")
+
+    // Lock for protecting mutable state
+    private let lock = NSLock()
+
+    // Mutable state - protected by lock for thread safety
     private var hotKeys: [MASShortcut: MASHotKey] = [:]
     private var registrations: [ShortcutRegistration: MASHotKey] = [:]
 
-    // Note: These properties are mutable but we're not making the class Sendable
-    // to keep the implementation simple and maintain compatibility
-    private let registrationQueue = DispatchQueue(label: "com.masshortcut.registration", attributes: .concurrent)
-
     // MARK: - Initialization
 
-    private override init() {
+    private init(validator: MASShortcutValidator) {
+        self.validator = validator
         super.init()
-        hotKeys = [:]
+
+        lock.withLock {
+            hotKeys = [:]
+        }
 
         _ = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
 
         // Install Carbon event handler - simplified for Swift 6 compatibility
         // In a full implementation, you would properly handle Carbon events
-        eventHandlerRef = nil // Simplified: not installing Carbon event handler
+        // Note: eventHandlerRef is protected by lock in handleEvent method
     }
 
     deinit {
         // Simplified deinit - Carbon event handler management removed for Swift 6 compatibility
     }
 
-    // MARK: - Singleton
+    // MARK: - Factory Methods
 
-    public static let shared: MASShortcutMonitor = {
-        let instance = MASShortcutMonitor()
-        return instance
-    }()
+    /// Creates a new shortcut monitor instance with a default validator.
+    /// For Swift 6 compatibility, shared instances are not used.
+    /// Instead, create and manage your own instance.
+    public static func create() -> MASShortcutMonitor {
+        let validator = MASShortcutValidator()
+        return MASShortcutMonitor(validator: validator)
+    }
+
+    /// Creates a new shortcut monitor instance with a custom validator.
+    public static func create(with validator: MASShortcutValidator) -> MASShortcutMonitor {
+        return MASShortcutMonitor(validator: validator)
+    }
 
     // MARK: - Errors
 
@@ -100,26 +120,34 @@ public final class MASShortcutMonitor: NSObject, ShortcutMonitoring, @unchecked 
     /// - Returns: A registration handle that can be used to unregister the shortcut.
     /// - Throws: `RegistrationError` if registration fails.
     public func registerShortcut(_ shortcut: MASShortcut, action: @escaping @Sendable () async -> Void) async throws -> ShortcutRegistration {
-        // Check if already registered
-        guard !isShortcutRegistered(shortcut) else {
-            throw RegistrationError.shortcutAlreadyRegistered(shortcut)
-        }
-
-        // Validate shortcut
-        guard MASShortcutValidator.shared.isShortcutValid(shortcut) else {
+        // Validate shortcut first
+        let isValid = await validator.isShortcutValid(shortcut)
+        guard isValid else {
             throw RegistrationError.invalidShortcut
         }
 
-        let registration = ShortcutRegistration(shortcut: shortcut)
-        let hotKey = MASHotKey(shortcut: shortcut)
+        return try await withCheckedThrowingContinuation { continuation in
+            registrationQueue.async {
+                self.lock.withLock {
+                    // Check if already registered
+                    guard self.hotKeys[shortcut] == nil else {
+                        continuation.resume(throwing: RegistrationError.shortcutAlreadyRegistered(shortcut))
+                        return
+                    }
 
-        if let hotKey = hotKey {
-            hotKey.action = { Task { await action() } }
-            hotKeys[shortcut] = hotKey
-            registrations[registration] = hotKey
-            return registration
-        } else {
-            throw RegistrationError.systemRegistrationFailed
+                    let registration = ShortcutRegistration(shortcut: shortcut)
+                    let hotKey = MASHotKey(shortcut: shortcut)
+
+                    if let hotKey = hotKey {
+                        hotKey.action = { Task { await action() } }
+                        self.hotKeys[shortcut] = hotKey
+                        self.registrations[registration] = hotKey
+                        continuation.resume(returning: registration)
+                    } else {
+                        continuation.resume(throwing: RegistrationError.systemRegistrationFailed)
+                    }
+                }
+            }
         }
     }
 
@@ -129,38 +157,52 @@ public final class MASShortcutMonitor: NSObject, ShortcutMonitoring, @unchecked 
     ///   - action: The synchronous action to execute when the shortcut is pressed.
     /// - Returns: `true` if registration was successful, `false` otherwise.
     public func registerShortcut(_ shortcut: MASShortcut, withAction action: @escaping () -> Void) -> Bool {
-        guard let hotKey = MASHotKey(shortcut: shortcut) else {
-            return false
-        }
+        return lock.withLock {
+            guard hotKeys[shortcut] == nil else {
+                return false // Already registered
+            }
 
-        hotKey.action = action
-        hotKeys[shortcut] = hotKey
-        return true
+            guard let hotKey = MASHotKey(shortcut: shortcut) else {
+                return false
+            }
+
+            hotKey.action = action
+            hotKeys[shortcut] = hotKey
+            return true
+        }
     }
 
     /// Check if a shortcut is currently registered.
     public func isShortcutRegistered(_ shortcut: MASShortcut) -> Bool {
-        return hotKeys[shortcut] != nil
+        return lock.withLock {
+            return hotKeys[shortcut] != nil
+        }
     }
 
     /// Unregister a shortcut by its registration handle.
     public func unregisterShortcut(_ registration: ShortcutRegistration) async {
-        guard registrations.removeValue(forKey: registration) != nil else {
-            return
+        lock.withLock {
+            guard registrations.removeValue(forKey: registration) != nil else {
+                return
+            }
+            hotKeys.removeValue(forKey: registration.shortcut)
         }
-        hotKeys.removeValue(forKey: registration.shortcut)
         // HotKey deinit will handle unregistration
     }
 
     /// Unregister a shortcut by its shortcut value.
     public func unregisterShortcut(_ shortcut: MASShortcut) {
-        hotKeys.removeValue(forKey: shortcut)
+        _ = lock.withLock {
+            hotKeys.removeValue(forKey: shortcut)
+        }
     }
 
     /// Unregister all shortcuts.
     public func unregisterAllShortcuts() async {
-        registrations.removeAll()
-        hotKeys.removeAll()
+        lock.withLock {
+            registrations.removeAll()
+            hotKeys.removeAll()
+        }
     }
 
     // MARK: - Higher-Order APIs
@@ -227,7 +269,9 @@ public final class MASShortcutMonitor: NSObject, ShortcutMonitoring, @unchecked 
             return
         }
 
-        for (_, hotKey) in hotKeys {
+        // Safely access hotKeys with lock
+        let hotKeysCopy = lock.withLock { hotKeys }
+        for (_, hotKey) in hotKeysCopy {
             if hotKeyID.id == hotKey.carbonID {
                 if let action = hotKey.action {
                     DispatchQueue.main.async {

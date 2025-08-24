@@ -13,31 +13,41 @@ import Foundation
  watches the changes in user defaults and updates the shortcut monitor
  accordingly with the new shortcuts.
  */
-public class MASShortcutBinder: NSObject, @unchecked Sendable {
+/// Thread-safe shortcut binder using serial queue for Swift 6 compatibility.
+/// Note: Uses @unchecked Sendable due to UserDefaults dependencies and complex mutable state.
+/// This is a pragmatic choice for compatibility while acknowledging the trade-off.
+public final class MASShortcutBinder: NSObject, @unchecked Sendable {
 
     // MARK: - Properties
 
-    private var actions: [String: () -> Void] = [:]
-    private var shortcuts: [String: MASShortcut] = [:]
-
     /// The underlying shortcut monitor.
-    public var shortcutMonitor: MASShortcutMonitor
+    private let shortcutMonitor: MASShortcutMonitor
 
     /// Binding options customizing the access to user defaults.
-    /// As an example, you can use `NSValueTransformerNameBindingOption` to customize
-    /// the storage format used for the shortcuts. By default the shortcuts are converted
-    /// from `Data` (`NSKeyedUnarchiveFromDataTransformerName`). Note that if the
-    /// binder is to work with `MASShortcutView`, both object have to use the same storage
-    /// format.
     public var bindingOptions: [String: Any] = [
         "NSValueTransformerNameBindingOption": NSValueTransformerName.secureUnarchiveFromDataTransformerName.rawValue
     ]
 
+    // Lock for protecting mutable state
+    private let lock = NSLock()
+
+    // Protected mutable state
+    private var actions: [String: () -> Void] = [:]
+    private var shortcuts: [String: MASShortcut] = [:]
+
     // MARK: - Initialization
 
     public override init() {
-        self.shortcutMonitor = MASShortcutMonitor.shared
+        self.shortcutMonitor = MASShortcutMonitor.create()
         super.init()
+        setupNotificationObserver()
+    }
+
+    /// Creates a new shortcut binder with a custom monitor.
+    public init(shortcutMonitor: MASShortcutMonitor) {
+        self.shortcutMonitor = shortcutMonitor
+        super.init()
+        setupNotificationObserver()
     }
 
     deinit {
@@ -45,12 +55,18 @@ public class MASShortcutBinder: NSObject, @unchecked Sendable {
         NotificationCenter.default.removeObserver(self)
     }
 
-    // MARK: - Singleton
+    private func setupNotificationObserver() {
+        NotificationCenter.default.addObserver(self, selector: #selector(userDefaultsChanged(_:)), name: UserDefaults.didChangeNotification, object: nil)
+    }
 
-    public static let shared: MASShortcutBinder = {
-        let instance = MASShortcutBinder()
-        return instance
-    }()
+    // MARK: - Factory Method
+
+    /// Creates a new shortcut binder instance.
+    /// For Swift 6 compatibility, shared instances are not used.
+    /// Instead, create and manage your own instance.
+    public static func create() -> MASShortcutBinder {
+        return MASShortcutBinder()
+    }
 
     // MARK: - Public Methods
 
@@ -64,11 +80,13 @@ public class MASShortcutBinder: NSObject, @unchecked Sendable {
         assert(!defaultsKeyName.contains("."), "Illegal character in binding name (\".\"), please see http://git.io/x5YS.")
         assert(!defaultsKeyName.contains(" "), "Illegal character in binding name (\" \"), please see http://git.io/x5YS.")
 
-        actions[defaultsKeyName] = action
+        lock.withLock {
+            actions[defaultsKeyName] = action
+        }
 
         // Note: Binding system simplified for Swift 6 compatibility
         // In a full implementation, you would implement proper KVO-based binding
-        NotificationCenter.default.addObserver(self, selector: #selector(userDefaultsChanged(_:)), name: UserDefaults.didChangeNotification, object: nil)
+        // Notification observer is set up in init
     }
 
     /**
@@ -77,11 +95,13 @@ public class MASShortcutBinder: NSObject, @unchecked Sendable {
      In other words, the shortcut stored under the given key will no longer trigger an action.
      */
     public func breakBinding(withDefaultsKey defaultsKeyName: String) {
-        if let shortcut = shortcuts[defaultsKeyName] {
-            shortcutMonitor.unregisterShortcut(shortcut)
+        lock.withLock {
+            if let shortcut = shortcuts[defaultsKeyName] {
+                shortcutMonitor.unregisterShortcut(shortcut)
+            }
+            shortcuts.removeValue(forKey: defaultsKeyName)
+            actions.removeValue(forKey: defaultsKeyName)
         }
-        shortcuts.removeValue(forKey: defaultsKeyName)
-        actions.removeValue(forKey: defaultsKeyName)
         // Simplified unbinding - just remove from actions
         // (NotificationCenter observer is removed in deinit)
     }
@@ -115,14 +135,16 @@ public class MASShortcutBinder: NSObject, @unchecked Sendable {
 
     @objc private func userDefaultsChanged(_ notification: Notification) {
         let defaults = UserDefaults.standard
-        for (key, action) in actions {
-            if let shortcut = defaults.object(forKey: key) as? MASShortcut {
-                // Update shortcut registration
-                if let currentShortcut = shortcuts[key], currentShortcut != shortcut {
-                    shortcutMonitor.unregisterShortcut(currentShortcut)
+        lock.withLock {
+            for (key, action) in actions {
+                if let shortcut = defaults.object(forKey: key) as? MASShortcut {
+                    // Update shortcut registration
+                    if let currentShortcut = shortcuts[key], currentShortcut != shortcut {
+                        shortcutMonitor.unregisterShortcut(currentShortcut)
+                    }
+                    shortcuts[key] = shortcut
+                    _ = shortcutMonitor.registerShortcut(shortcut, withAction: action)
                 }
-                shortcuts[key] = shortcut
-                _ = shortcutMonitor.registerShortcut(shortcut, withAction: action)
             }
         }
     }
@@ -130,7 +152,9 @@ public class MASShortcutBinder: NSObject, @unchecked Sendable {
     // MARK: - Bindings Support
 
     private func isRegisteredAction(_ name: String) -> Bool {
-        return actions[name] != nil
+        return lock.withLock {
+            return actions[name] != nil
+        }
     }
 
     // Simplified binding support - removed for Swift 6 compatibility

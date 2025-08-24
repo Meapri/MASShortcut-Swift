@@ -21,7 +21,7 @@ public class MASShortcutView: NSView {
         }
     }
 
-    public var shortcutValidator: MASShortcutValidator = .shared
+    public var shortcutValidator: MASShortcutValidator = .create()
 
     public private(set) var isRecording: Bool = false
 

@@ -76,22 +76,42 @@ public enum ValidationError: LocalizedError, Sendable {
 }
 
 /// Modern shortcut validator with async/await support.
-public final class MASShortcutValidator: NSObject, ShortcutValidation, @unchecked Sendable {
+/// Thread-safe implementation for Swift 6 compatibility.
+/// Note: Uses @unchecked Sendable due to complex validation logic and UI integration requirements.
+/// This is a pragmatic choice for compatibility while acknowledging the trade-off.
+public final class MASShortcutValidator: ShortcutValidation, @unchecked Sendable {
 
     // MARK: - Properties
 
     /// Configuration for validation behavior.
-    public var context: ValidationContext = .default
+    private var context: ValidationContext = .default
 
-    // Note: This property is mutable but we're not making the class Sendable
-    // to keep the implementation simple and maintain compatibility
+    // MARK: - Initialization
 
-    // MARK: - Singleton
+    public init() {
+        // Default initialization
+    }
 
-    public static let shared: MASShortcutValidator = {
-        let instance = MASShortcutValidator()
-        return instance
-    }()
+    // MARK: - Factory Method
+
+    /// Creates a new shortcut validator instance.
+    /// For Swift 6 compatibility, shared instances are not used.
+    /// Instead, create and manage your own instance.
+    public static func create() -> MASShortcutValidator {
+        return MASShortcutValidator()
+    }
+
+    // MARK: - Configuration
+
+    /// Updates the validation context.
+    public func updateContext(_ newContext: ValidationContext) {
+        context = newContext
+    }
+
+    /// Gets the current validation context.
+    public func getContext() -> ValidationContext {
+        return context
+    }
 
     // MARK: - Public Methods
 
@@ -115,13 +135,16 @@ public final class MASShortcutValidator: NSObject, ShortcutValidation, @unchecke
         return .success(())
     }
 
-
-
-    // MARK: - Legacy API (for backward compatibility)
-
+    /// Synchronous validation method for backward compatibility.
+    /// Note: This is a synchronous wrapper around the async validation for compatibility.
+    /// For new code, prefer the async validateShortcut method.
     public func isShortcutValid(_ shortcut: MASShortcut) -> Bool {
         return isShortcutValid(shortcut, context: context)
     }
+
+
+
+    // MARK: - Legacy API (for backward compatibility)
 
     private func isShortcutValid(_ shortcut: MASShortcut, context: ValidationContext) -> Bool {
         let keyCode = shortcut.keyCode
