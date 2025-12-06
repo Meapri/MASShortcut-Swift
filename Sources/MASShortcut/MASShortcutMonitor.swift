@@ -50,6 +50,9 @@ public final class MASShortcutMonitor: NSObject, ShortcutMonitoring, @unchecked 
 
     // Lock for protecting mutable state
     private let lock = NSLock()
+    
+    // Carbon Event Handler Reference
+    private var eventHandlerRef: EventHandlerRef?
 
     // Mutable state - protected by lock for thread safety
     private var hotKeys: [MASShortcut: MASHotKey] = [:]
@@ -65,15 +68,26 @@ public final class MASShortcutMonitor: NSObject, ShortcutMonitoring, @unchecked 
             hotKeys = [:]
         }
 
-        _ = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-
-        // Install Carbon event handler - simplified for Swift 6 compatibility
-        // In a full implementation, you would properly handle Carbon events
-        // Note: eventHandlerRef is protected by lock in handleEvent method
+        // Install Carbon event handler
+        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        
+        // Pass 'self' as userData so we can access instance methods in the callback
+        let selfPointer = Unmanaged.passUnretained(self).toOpaque()
+        
+        InstallEventHandler(
+            GetEventDispatcherTarget(),
+            mas_carbonEventHandler,
+            1,
+            &eventType,
+            selfPointer,
+            &eventHandlerRef
+        )
     }
 
     deinit {
-        // Simplified deinit - Carbon event handler management removed for Swift 6 compatibility
+        if let handler = eventHandlerRef {
+            RemoveEventHandler(handler)
+        }
     }
 
     // MARK: - Factory Methods
@@ -249,23 +263,21 @@ public final class MASShortcutMonitor: NSObject, ShortcutMonitoring, @unchecked 
 
     // MARK: - Event Handling
 
-    public func handleEvent(_ event: EventRef) {
-        if GetEventClass(event) != OSType(kEventClassKeyboard) {
-            return
-        }
-
+    // MARK: - Internal Event Handling
+    
+    fileprivate func handleCarbonEvent(_ event: EventRef) {
         var hotKeyID = EventHotKeyID()
         let status = GetEventParameter(
             event,
-            UInt32(kEventParamDirectObject),
-            UInt32(typeEventHotKeyID),
+            EventParamName(kEventParamDirectObject),
+            EventParamType(typeEventHotKeyID),
             nil,
             MemoryLayout<EventHotKeyID>.size,
             nil,
             &hotKeyID
         )
 
-        if status != noErr || hotKeyID.signature != MASHotKeySignature {
+        if status != noErr || hotKeyID.signature != MASHotKey.signature {
             return
         }
 
@@ -282,6 +294,23 @@ public final class MASShortcutMonitor: NSObject, ShortcutMonitoring, @unchecked 
             }
         }
     }
+}
+
+// MARK: - C Callback Function
+
+private func mas_carbonEventHandler(
+    _ nextHandler: EventHandlerCallRef?,
+    _ event: EventRef?,
+    _ userData: UnsafeMutableRawPointer?
+) -> OSStatus {
+    guard let event = event, let userData = userData else {
+        return OSStatus(eventNotHandledErr)
+    }
+    
+    let monitor = Unmanaged<MASShortcutMonitor>.fromOpaque(userData).takeUnretainedValue()
+    monitor.handleCarbonEvent(event)
+    
+    return noErr
 }
 
 // MARK: - Event Handling

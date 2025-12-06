@@ -2,19 +2,17 @@ import AppKit
 import Carbon
 import Foundation
 
-public let MASHotKeySignature: FourCharCode = {
-    if let code = FourCharCode("MASS") {
-        return code
-    } else {
-        // Fallback value
-        return FourCharCode(0x4D415353) // "MASS" in hex
-    }
-}()
+
 
 /**
  MASHotKey represents a registered global hotkey that can trigger actions.
  */
 public class MASHotKey: NSObject {
+    
+    // Global signature for all shortcuts in this app
+    static let signature: FourCharCode = {
+        return FourCharCode("MASS") ?? 0x4D415353
+    }()
 
     // MARK: - Properties
 
@@ -36,7 +34,7 @@ public class MASHotKey: NSObject {
         StaticHolder.carbonHotKeyID += 1
         self.carbonID = StaticHolder.carbonHotKeyID
 
-        let hotKeyID = EventHotKeyID(signature: MASHotKeySignature, id: carbonID)
+        let hotKeyID = EventHotKeyID(signature: MASHotKey.signature, id: carbonID)
 
         let status = RegisterEventHotKey(
             shortcut.carbonKeyCode,

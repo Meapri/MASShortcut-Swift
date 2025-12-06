@@ -20,6 +20,10 @@ let package = Package(
                 .process("Resources")
             ]
         ),
+        .executableTarget(
+            name: "MASShortcutVerify",
+            dependencies: ["MASShortcut"]
+        ),
         .testTarget(
             name: "MASShortcutTests",
             dependencies: ["MASShortcut"],

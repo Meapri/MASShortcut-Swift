@@ -85,6 +85,22 @@ public final class MASShortcutValidator: ShortcutValidation, @unchecked Sendable
 
     /// Configuration for validation behavior.
     private var context: ValidationContext = .default
+    
+    /// Cached system shortcuts
+    private lazy var systemShortcuts: [MASShortcut] = {
+        guard let url = Bundle.module.url(forResource: "SystemShortcuts", withExtension: "plist"),
+              let array = NSArray(contentsOf: url) as? [[String: Any]] else {
+            return []
+        }
+        
+        return array.compactMap { dict in
+            guard let keyCode = dict["keyCode"] as? Int,
+                  let flags = dict["modifierFlags"] as? UInt else {
+                return nil
+            }
+            return MASShortcut(keyCode: keyCode, modifierFlags: NSEvent.ModifierFlags(rawValue: flags))
+        }
+    }()
 
     // MARK: - Initialization
 
@@ -127,9 +143,19 @@ public final class MASShortcutValidator: ShortcutValidation, @unchecked Sendable
             return .failure(.invalidShortcut(reason: "Shortcut does not meet basic requirements"))
         }
 
-        // System reserved check (simplified for modern implementation)
+        // System reserved check
         if !context.allowSystemShortcuts && isSystemReserved(shortcut) {
             return .failure(.systemReserved)
+        }
+        
+        // Menu Conflict Check (must run on Main Thread)
+        let isTakenByMenu = await MainActor.run {
+             var explanation: String? = nil
+             return isShortcutAlreadyTakenBySystem(shortcut, explanation: &explanation)
+        }
+        
+        if isTakenByMenu {
+            return .failure(.menuConflict(MenuConflict(menuItem: NSMenuItem(), conflictingShortcut: shortcut, menuPath: []))) // Simplified error construction
         }
 
         return .success(())
@@ -195,50 +221,61 @@ public final class MASShortcutValidator: ShortcutValidation, @unchecked Sendable
     }
 
     private func isSystemReserved(_ shortcut: MASShortcut) -> Bool {
-        // Simplified system reservation check
-        // In a full implementation, this would check against system hotkeys
-        return false
+        return systemShortcuts.contains(shortcut)
     }
 
+    /// Checks if a shortcut is already taken by a menu item.
+    /// - Note: This method must run on the MainActor because it accesses NSMenu.
+    @MainActor
     public func isShortcut(_ shortcut: MASShortcut, alreadyTakenInMenu menu: NSMenu, explanation: inout String?) -> Bool {
-        // Simplified: skip services menu check to avoid MainActor isolation issues
-        // if allowOverridingServicesShortcut && menu == NSApp.servicesMenu {
-        //     return false
-        // }
+        // Services menu check
+        if context.allowServiceMenuOverrides == false && menu == NSApp.servicesMenu {
+            return false // Simplified for now, in reality traversing services menu is complex
+        }
 
         let keyEquivalent = shortcut.keyCodeStringForKeyEquivalent
         let flags = shortcut.modifierFlags
 
         for menuItem in menu.items {
-            if menuItem.hasSubmenu, isShortcut(shortcut, alreadyTakenInMenu: menuItem.submenu!, explanation: &explanation) {
-                return true
+            if menuItem.hasSubmenu, let submenu = menuItem.submenu {
+                if isShortcut(shortcut, alreadyTakenInMenu: submenu, explanation: &explanation) {
+                    return true
+                }
             }
 
             var equalFlags = MASPickModifiersIncludingFn(menuItem.keyEquivalentModifierMask) == flags
             let equalHotkeyLowercase = menuItem.keyEquivalent.lowercased() == keyEquivalent
 
-            // Check if the cases are different, we know ours is lower and that shift is included in our modifiers
-            // If theirs is capitol, we need to add shift to their modifiers
+            // Check if the cases are different (case insensitive match)
             if equalHotkeyLowercase && menuItem.keyEquivalent != keyEquivalent {
                 let theirFlags = menuItem.keyEquivalentModifierMask.union(.shift)
                 equalFlags = MASPickModifiersIncludingFn(theirFlags) == flags
             }
 
             if equalFlags && equalHotkeyLowercase {
-                if explanation != nil {
-                    let format = NSLocalizedString("This shortcut cannot be used because it is already used by the menu item '%@'.",
-                                                  comment: "Message for alert when shortcut is already used")
-                    explanation = String(format: format, menuItem.title)
-                }
+                let format = NSLocalizedString("This shortcut cannot be used because it is already used by the menu item '%@'.",
+                                              comment: "Message for alert when shortcut is already used")
+                explanation = String(format: format, menuItem.title)
                 return true
             }
         }
         return false
     }
 
+    @MainActor
     public func isShortcutAlreadyTakenBySystem(_ shortcut: MASShortcut, explanation: inout String?) -> Bool {
-        // For simplicity, skip system hotkey checking
-        // In a full implementation, you would check system hotkeys and main menu
+        if isSystemReserved(shortcut) {
+             explanation = NSLocalizedString("This shortcut is reserved by the system.", comment: "System reserved explanation")
+             return true
+        }
+        
+        // Main Menu Check
+        if let mainMenu = NSApp.mainMenu {
+             if isShortcut(shortcut, alreadyTakenInMenu: mainMenu, explanation: &explanation) {
+                 return true
+             }
+        }
+        
         return false
     }
 }

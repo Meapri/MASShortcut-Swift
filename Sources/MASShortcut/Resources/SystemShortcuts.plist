@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+    <!-- Command + Tab (App Switcher) -->
+    <dict>
+        <key>keyCode</key>
+        <integer>48</integer>
+        <key>modifierFlags</key>
+        <integer>1048576</integer>
+    </dict>
+    <!-- Command + Space (Spotlight) -->
+    <dict>
+        <key>keyCode</key>
+        <integer>49</integer>
+        <key>modifierFlags</key>
+        <integer>1048576</integer>
+    </dict>
+    <!-- Command + Option + Esc (Force Quit) -->
+    <dict>
+        <key>keyCode</key>
+        <integer>53</integer>
+        <key>modifierFlags</key>
+        <integer>1572864</integer>
+    </dict>
+</array>
+</plist>
